@@ -10,100 +10,108 @@ app.use(bodyParser.json());
 
 const SECRET = "js_distributors_secret";
 
-// 🗄️ DATABASE
+// ----------------- DATABASE -----------------
 const db = new sqlite3.Database("./pos.db");
 
-// CREATE TABLES
 db.serialize(() => {
+  // USERS
   db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    username TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
     password TEXT,
     role TEXT
   )`);
 
+  // PRODUCTS
   db.run(`CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     price REAL,
     cost REAL,
     stock INTEGER
   )`);
 
+  // SALES
   db.run(`CREATE TABLE IF NOT EXISTS sales (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     total REAL,
     profit REAL,
     user TEXT,
     date TEXT
   )`);
 
-  // default admin
-  db.run(`INSERT OR IGNORE INTO users (id, username, password, role)
-          VALUES (1, 'admin', '1234', 'admin')`);
+  // DEFAULT ADMIN
+  db.run(
+    `INSERT OR IGNORE INTO users (id, username, password, role) VALUES (1,'admin','1234','admin')`
+  );
 });
 
-// 🔐 LOGIN
+// ----------------- AUTH -----------------
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
-
   db.get(
     "SELECT * FROM users WHERE username=? AND password=?",
     [username, password],
     (err, user) => {
-      if (!user) return res.status(401).send("Invalid");
-
-      const token = jwt.sign(user, SECRET);
+      if (err || !user) return res.status(401).json({ error: "Invalid credentials" });
+      const token = jwt.sign({ username: user.username, role: user.role }, SECRET);
       res.json({ token });
     }
   );
 });
 
-// 🔐 AUTH MIDDLEWARE
 function auth(req, res, next) {
   const token = req.headers.authorization;
-  if (!token) return res.sendStatus(403);
+  if (!token) return res.status(403).json({ error: "No token" });
 
   jwt.verify(token, SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+    if (err) return res.status(403).json({ error: "Invalid token" });
     req.user = user;
     next();
   });
 }
 
-// 📦 PRODUCTS
+// ----------------- PRODUCTS -----------------
 app.get("/products", auth, (req, res) => {
-  db.all("SELECT * FROM products", (err, rows) => {
-    res.json(rows);
-  });
+  db.all("SELECT * FROM products", (err, rows) => res.json(rows));
 });
 
 app.post("/products", auth, (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
   const { name, price, cost, stock } = req.body;
-
   db.run(
-    "INSERT INTO products(name,price,cost,stock) VALUES(?,?,?,?)",
+    "INSERT INTO products (name, price, cost, stock) VALUES (?,?,?,?)",
     [name, price, cost, stock],
-    () => res.json({ success: true })
+    function () {
+      res.json({ success: true, id: this.lastID });
+    }
   );
 });
 
-// 💰 SALES
+// ----------------- SALES -----------------
 app.post("/sale", auth, (req, res) => {
-  const { total, profit } = req.body;
-
+  const { items, total, profit } = req.body;
   db.run(
-    "INSERT INTO sales(total,profit,user,date) VALUES(?,?,?,?)",
-    [total, profit, req.user.username, new Date()],
-    () => res.json({ success: true })
+    "INSERT INTO sales (total, profit, user, date) VALUES (?,?,?,?)",
+    [total, profit, req.user.username, new Date().toISOString()],
+    function () {
+      res.json({ success: true, id: this.lastID });
+    }
   );
 });
 
-app.get("/reports", auth, (req, res) => {
-  db.all("SELECT * FROM sales", (err, rows) => {
-    res.json(rows);
-  });
+app.get("/sales", auth, (req, res) => {
+  db.all("SELECT * FROM sales", (err, rows) => res.json(rows));
 });
 
-// 🚀 START
-app.listen(3000, () => console.log("🔥 FINAL POS RUNNING"));
+// ----------------- M-PESA SIMULATION -----------------
+app.post("/mpesa", auth, (req, res) => {
+  const { phone, amount } = req.body;
+  console.log(`M-Pesa payment simulated: ${phone} pays ${amount}`);
+  setTimeout(() => res.json({ success: true }), 2000);
+});
+
+// ----------------- START SERVER -----------------
+const PORT = 3000;
+app.listen(PORT, () => console.log(`✅ Backend running on port ${PORT}`));
