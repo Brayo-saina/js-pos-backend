@@ -1,53 +1,109 @@
 const express = require("express");
-const bodyParser = require("body-parser");
+const sqlite3 = require("sqlite3").verbose();
 const cors = require("cors");
+const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
 
 const app = express();
-app.use(bodyParser.json());
 app.use(cors());
+app.use(bodyParser.json());
 
-// 🔹 In-memory database (replace with real DB later)
-let sales = [];
-let products = [];
+const SECRET = "js_distributors_secret";
 
-// ✅ Health check
-app.get("/", (req, res) => {
-  res.send("JS DISTRIBUTORS POS API RUNNING");
+// 🗄️ DATABASE
+const db = new sqlite3.Database("./pos.db");
+
+// CREATE TABLES
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT,
+    password TEXT,
+    role TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    price REAL,
+    cost REAL,
+    stock INTEGER
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY,
+    total REAL,
+    profit REAL,
+    user TEXT,
+    date TEXT
+  )`);
+
+  // default admin
+  db.run(`INSERT OR IGNORE INTO users (id, username, password, role)
+          VALUES (1, 'admin', '1234', 'admin')`);
 });
 
-// ✅ Save sale
-app.post("/sale", (req, res) => {
-  const sale = req.body;
-  sales.push(sale);
-  res.json({ success: true });
+// 🔐 LOGIN
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  db.get(
+    "SELECT * FROM users WHERE username=? AND password=?",
+    [username, password],
+    (err, user) => {
+      if (!user) return res.status(401).send("Invalid");
+
+      const token = jwt.sign(user, SECRET);
+      res.json({ token });
+    }
+  );
 });
 
-// ✅ Get all sales
-app.get("/sales", (req, res) => {
-  res.json(sales);
+// 🔐 AUTH MIDDLEWARE
+function auth(req, res, next) {
+  const token = req.headers.authorization;
+  if (!token) return res.sendStatus(403);
+
+  jwt.verify(token, SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
+// 📦 PRODUCTS
+app.get("/products", auth, (req, res) => {
+  db.all("SELECT * FROM products", (err, rows) => {
+    res.json(rows);
+  });
 });
 
-// ✅ Save products
-app.post("/products", (req, res) => {
-  products = req.body;
-  res.json({ success: true });
+app.post("/products", auth, (req, res) => {
+  const { name, price, cost, stock } = req.body;
+
+  db.run(
+    "INSERT INTO products(name,price,cost,stock) VALUES(?,?,?,?)",
+    [name, price, cost, stock],
+    () => res.json({ success: true })
+  );
 });
 
-// ✅ Get products
-app.get("/products", (req, res) => {
-  res.json(products);
+// 💰 SALES
+app.post("/sale", auth, (req, res) => {
+  const { total, profit } = req.body;
+
+  db.run(
+    "INSERT INTO sales(total,profit,user,date) VALUES(?,?,?,?)",
+    [total, profit, req.user.username, new Date()],
+    () => res.json({ success: true })
+  );
 });
 
-// ✅ Simulated M-Pesa (SAFE TEST)
-app.post("/mpesa", (req, res) => {
-  const { phone, amount } = req.body;
-
-  console.log("M-Pesa request:", phone, amount);
-
-  setTimeout(() => {
-    res.json({ success: true });
-  }, 2000);
+app.get("/reports", auth, (req, res) => {
+  db.all("SELECT * FROM sales", (err, rows) => {
+    res.json(rows);
+  });
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log("✅ Server running on port " + PORT));
+// 🚀 START
+app.listen(3000, () => console.log("🔥 FINAL POS RUNNING"));
