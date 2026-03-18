@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>JS DISTRIBUTORS POS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: Arial; margin:0; background:#f5f5f5;}
+    header { background:#111; color:#fff; padding:15px; text-align:center;}
+    .container { padding:15px;}
+    input, button {
+      padding:10px; margin:5px; width:100%;
+      border-radius:8px; border:1px solid #ccc;
+    }
+    button { background:#111; color:#fff; }
+    .card {
+      background:#fff; padding:10px; margin:10px 0;
+      border-radius:10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h2>JS DISTRIBUTORS POS (KES)</h2>
+</header>
+
+<div class="container">
+
+  <div id="loginSection">
+    <h3>Login</h3>
+    <input id="username" placeholder="Username">
+    <input id="password" type="password" placeholder="Password">
+    <button onclick="login()">Login</button>
+  </div>
+
+  <div id="app" style="display:none">
+
+    <h3>Welcome <span id="userDisplay"></span></h3>
+
+    <button onclick="show('pos')">POS</button>
+    <button onclick="show('inventory')">Inventory</button>
+    <button onclick="logout()">Logout</button>
+
+    <!-- POS -->
+    <div id="pos">
+      <h3>Products</h3>
+      <div id="products"></div>
+
+      <h3>Cart</h3>
+      <div id="cart"></div>
+
+      <button onclick="checkout()">Pay (M-Pesa)</button>
+    </div>
+
+    <!-- Inventory -->
+    <div id="inventory" style="display:none">
+      <h3>Add Product</h3>
+      <input id="pname" placeholder="Name">
+      <input id="pprice" type="number" placeholder="Price">
+      <input id="pcost" type="number" placeholder="Cost">
+      <input id="pstock" type="number" placeholder="Stock">
+      <button onclick="addProduct()">Add</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:3000"; // CHANGE AFTER DEPLOY
+
+let users = [{ username:"admin", password:"1234", role:"admin"}];
+let currentUser = null;
+
+let products = [];
+let cart = [];
+
+// 🔐 LOGIN
+function login() {
+  let u = username.value;
+  let p = password.value;
+
+  let user = users.find(x => x.username === u && x.password === p);
+
+  if (!user) return alert("Wrong login");
+
+  currentUser = user;
+  loginSection.style.display = "none";
+  app.style.display = "block";
+  userDisplay.innerText = user.username;
+
+  loadProducts();
+}
+
+// 🔄 LOAD PRODUCTS FROM SERVER
+async function loadProducts() {
+  let res = await fetch(API + "/products");
+  products = await res.json();
+  renderProducts();
+}
+
+// ➕ ADD PRODUCT
+async function addProduct() {
+  let p = {
+    name: pname.value,
+    price: +pprice.value,
+    cost: +pcost.value,
+    stock: +pstock.value
+  };
+
+  products.push(p);
+
+  await fetch(API + "/products", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(products)
+  });
+
+  renderProducts();
+}
+
+// 🧾 RENDER PRODUCTS
+function renderProducts() {
+  productsDiv = document.getElementById("products");
+  productsDiv.innerHTML = "";
+
+  products.forEach((p,i) => {
+    productsDiv.innerHTML += `
+      <div class="card">
+        ${p.name} - KES ${p.price} (Stock:${p.stock})
+        <button onclick="addToCart(${i})">Add</button>
+      </div>`;
+  });
+}
+
+// 🛒 ADD TO CART
+function addToCart(i) {
+  if (products[i].stock <= 0) return alert("Out of stock");
+
+  products[i].stock--;
+  cart.push(products[i]);
+  renderProducts();
+  renderCart();
+}
+
+// 🧾 CART
+function renderCart() {
+  cartDiv.innerHTML = "";
+  let total = 0;
+
+  cart.forEach(p=>{
+    total += p.price;
+    cartDiv.innerHTML += `<div>${p.name} - ${p.price}</div>`;
+  });
+
+  cartDiv.innerHTML += `<h3>Total: KES ${total}</h3>`;
+}
+
+// 💰 CHECKOUT
+async function checkout() {
+  let total = cart.reduce((s,p)=>s+p.price,0);
+
+  let phone = prompt("Enter phone (07XXXXXXXX):");
+
+  let res = await fetch(API + "/mpesa", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ phone, amount: total })
+  });
+
+  let data = await res.json();
+
+  if (!data.success) return alert("Payment failed");
+
+  let sale = {
+    items: cart,
+    total,
+    user: currentUser.username,
+    date: new Date()
+  };
+
+  await fetch(API + "/sale", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(sale)
+  });
+
+  printReceipt(sale);
+
+  cart = [];
+  renderCart();
+}
+
+// 🧾 RECEIPT
+function printReceipt(sale) {
+  let text = `
+JS DISTRIBUTORS
+----------------
+${sale.items.map(p=>p.name+"-"+p.price).join("\n")}
+----------------
+TOTAL: ${sale.total}
+`;
+
+  let w = window.open("");
+  w.document.write("<pre>"+text+"</pre>");
+  w.print();
+}
+
+// NAV
+function show(x){
+  pos.style.display="none";
+  inventory.style.display="none";
+  document.getElementById(x).style.display="block";
+}
+
+function logout(){ location.reload(); }
+</script>
+
+</body>
+</html>
