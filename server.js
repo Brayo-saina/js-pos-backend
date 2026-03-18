@@ -22,10 +22,13 @@ db.serialize(() => {
     role TEXT
   )`);
 
-  // PRODUCTS
+  // PRODUCTS (with Item ID, Model, Category)
   db.run(`CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT UNIQUE,
     name TEXT,
+    model TEXT,
+    category TEXT,
     price REAL,
     cost REAL,
     stock INTEGER
@@ -86,8 +89,9 @@ app.get("/products", auth, (req,res)=>{
 
 app.post("/products", auth, (req,res)=>{
   if(req.user.role!=="admin") return res.status(403).json({error:"Admin only"});
-  const {name,price,cost,stock} = req.body;
-  db.run("INSERT INTO products(name,price,cost,stock) VALUES(?,?,?,?)", [name,price,cost,stock], function(){
+  const {item_id,name,model,category,price,cost,stock} = req.body;
+  db.run("INSERT INTO products(item_id,name,model,category,price,cost,stock) VALUES(?,?,?,?,?,?,?)", 
+    [item_id,name,model,category,price,cost,stock], function(){
     res.json({success:true,id:this.lastID});
   });
 });
