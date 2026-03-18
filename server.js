@@ -110,17 +110,13 @@ app.post("/add-stock", auth, (req, res) => {
 // ---------------- SALES ----------------
 app.post("/sale", auth, (req,res)=>{
   const { items, total, profit } = req.body;
-  // Deduct stock
   items.forEach(item => {
     db.run("UPDATE products SET stock=stock-? WHERE id=?", [1, item.id]);
   });
-  // Record sale
   db.run(
     "INSERT INTO sales(total,profit,user,date) VALUES(?,?,?,?)",
     [total, profit, req.user.username, new Date().toISOString()],
-    function () {
-      res.json({ success: true, id: this.lastID });
-    }
+    function () { res.json({ success: true, id: this.lastID }); }
   );
 });
 
