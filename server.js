@@ -14,6 +14,7 @@ const SECRET = "js_distributors_secret";
 const db = new sqlite3.Database("./pos.db");
 
 db.serialize(() => {
+
   // USERS
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,21 +44,29 @@ db.serialize(() => {
     date TEXT
   )`);
 
+  // AGENTS
+  db.run(`CREATE TABLE IF NOT EXISTS agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    phone TEXT,
+    id_number TEXT
+  )`);
+
   // TRANSFERS
   db.run(`CREATE TABLE IF NOT EXISTS transfers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER,
     product_id INTEGER,
     quantity INTEGER,
-    from_location TEXT,
-    to_location TEXT,
     date TEXT
   )`);
 
   // DEFAULT ADMIN
   db.get("SELECT * FROM users WHERE username='admin'", (err,row)=>{
     if(!row){
-      db.run("INSERT INTO users (username,password,role) VALUES (?,?,?)", ["admin","1234","admin"]);
-      console.log("Default admin user created: admin / 1234");
+      db.run("INSERT INTO users (username,password,role) VALUES (?,?,?)",
+        ["admin","1234","admin"]);
+      console.log("Admin created: admin / 1234");
     }
   });
 });
@@ -65,9 +74,10 @@ db.serialize(() => {
 // ---------------- AUTH ----------------
 app.post("/login", (req,res)=>{
   const {username,password} = req.body;
-  db.get("SELECT * FROM users WHERE username=? AND password=?", [username,password], (err,user)=>{
-    if(err || !user) return res.status(401).json({error:"Invalid credentials"});
-    const token = jwt.sign({username:user.username, role:user.role}, SECRET);
+  db.get("SELECT * FROM users WHERE username=? AND password=?",
+    [username,password], (err,user)=>{
+    if(!user) return res.status(401).json({error:"Invalid login"});
+    const token = jwt.sign(user, SECRET);
     res.json({token});
   });
 });
@@ -88,68 +98,83 @@ app.get("/products", auth, (req,res)=>{
 });
 
 app.post("/products", auth, (req,res)=>{
-  if(req.user.role!=="admin") return res.status(403).json({error:"Admin only"});
-  const {item_id,name,model,category,price,cost,stock} = req.body;
-  db.run("INSERT INTO products(item_id,name,model,category,price,cost,stock) VALUES(?,?,?,?,?,?,?)", 
-    [item_id,name,model,category,price,cost,stock], function(){
-    res.json({success:true,id:this.lastID});
-  });
+  const p = req.body;
+  db.run(`INSERT INTO products(item_id,name,model,category,price,cost,stock)
+    VALUES(?,?,?,?,?,?,?)`,
+    [p.item_id,p.name,p.model,p.category,p.price,p.cost,p.stock],
+    function(){ res.json({success:true}); });
 });
 
 // ---------------- ADD STOCK ----------------
-app.post("/add-stock", auth, (req, res) => {
-  const { product_id, quantity } = req.body;
-  db.get("SELECT * FROM products WHERE id=?", [product_id], (err, product) => {
-    if (err || !product) return res.status(404).json({ error: "Product not found" });
-    db.run("UPDATE products SET stock=stock+? WHERE id=?", [quantity, product_id], function () {
-      res.json({ success: true, newStock: product.stock + quantity });
-    });
-  });
+app.post("/add-stock", auth, (req,res)=>{
+  const {product_id,quantity} = req.body;
+  db.run("UPDATE products SET stock=stock+? WHERE id=?",
+    [quantity,product_id],
+    ()=>res.json({success:true}));
 });
 
 // ---------------- SALES ----------------
 app.post("/sale", auth, (req,res)=>{
-  const { items, total, profit } = req.body;
-  items.forEach(item => {
-    db.run("UPDATE products SET stock=stock-? WHERE id=?", [1, item.id]);
+  const {items,total,profit} = req.body;
+
+  items.forEach(i=>{
+    db.run("UPDATE products SET stock=stock-1 WHERE id=?", [i.id]);
   });
-  db.run(
-    "INSERT INTO sales(total,profit,user,date) VALUES(?,?,?,?)",
-    [total, profit, req.user.username, new Date().toISOString()],
-    function () { res.json({ success: true, id: this.lastID }); }
-  );
+
+  db.run(`INSERT INTO sales(total,profit,user,date)
+    VALUES(?,?,?,?)`,
+    [total,profit,req.user.username,new Date().toISOString()],
+    ()=>res.json({success:true}));
 });
 
 app.get("/sales", auth, (req,res)=>{
   db.all("SELECT * FROM sales", (err,rows)=>res.json(rows));
 });
 
+// ---------------- AGENTS ----------------
+app.post("/agents", auth, (req,res)=>{
+  const {name,phone,id_number} = req.body;
+  db.run("INSERT INTO agents(name,phone,id_number) VALUES(?,?,?)",
+    [name,phone,id_number],
+    function(){ res.json({success:true}); });
+});
+
+app.get("/agents", auth, (req,res)=>{
+  db.all("SELECT * FROM agents", (err,rows)=>res.json(rows));
+});
+
 // ---------------- TRANSFERS ----------------
 app.post("/transfer", auth, (req,res)=>{
-  const {product_id, quantity, from_location, to_location} = req.body;
-  db.get("SELECT * FROM products WHERE id=?", [product_id], (err,product)=>{
-    if(err || !product) return res.status(404).json({error:"Product not found"});
-    if(product.stock<quantity) return res.status(400).json({error:"Insufficient stock"});
-    db.run("UPDATE products SET stock=stock-? WHERE id=?", [quantity,product_id]);
-    db.run("INSERT INTO transfers(product_id,quantity,from_location,to_location,date) VALUES(?,?,?,?,?)",
-      [product_id,quantity,from_location,to_location,new Date().toISOString()],
-      function(){ res.json({success:true,transfer_id:this.lastID}); }
-    );
+  const {agent_id,product_id,quantity} = req.body;
+
+  db.get("SELECT * FROM products WHERE id=?",[product_id],(err,p)=>{
+    if(!p) return res.json({error:"Product not found"});
+    if(p.stock<quantity) return res.json({error:"Insufficient stock"});
+
+    db.run("UPDATE products SET stock=stock-? WHERE id=?",
+      [quantity,product_id]);
+
+    db.run(`INSERT INTO transfers(agent_id,product_id,quantity,date)
+      VALUES(?,?,?,?)`,
+      [agent_id,product_id,quantity,new Date().toISOString()],
+      ()=>res.json({success:true}));
   });
 });
 
 app.get("/transfers", auth, (req,res)=>{
-  db.all(`SELECT t.id, p.name AS product, t.quantity, t.from_location, t.to_location, t.date 
-          FROM transfers t JOIN products p ON t.product_id = p.id`, (err,rows)=>res.json(rows));
+  db.all(`
+    SELECT t.*, a.name agent_name, a.phone, a.id_number,
+           p.name product_name, p.item_id
+    FROM transfers t
+    JOIN agents a ON t.agent_id=a.id
+    JOIN products p ON t.product_id=p.id
+  `,(err,rows)=>res.json(rows));
 });
 
-// ---------------- M-PESA SIMULATION ----------------
+// ---------------- M-PESA ----------------
 app.post("/mpesa", auth, (req,res)=>{
-  const {phone, amount} = req.body;
-  console.log(`M-Pesa payment simulated: ${phone} pays ${amount}`);
-  setTimeout(()=>res.json({success:true}),2000);
+  setTimeout(()=>res.json({success:true}),1500);
 });
 
-// ---------------- START SERVER ----------------
-const PORT = 3000;
-app.listen(PORT,()=>console.log(`✅ Backend running on port ${PORT}`));
+// ---------------- START ----------------
+app.listen(3000,()=>console.log("Server running on 3000"));
