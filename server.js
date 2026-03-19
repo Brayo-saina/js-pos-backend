@@ -13,7 +13,7 @@ db.serialize(() => {
 
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
+    username TEXT,
     password TEXT
   )`);
 
@@ -43,14 +43,15 @@ db.serialize(() => {
     date TEXT
   )`);
 
-  // CREATE DEFAULT USER
+  // DEFAULT USER
   db.get("SELECT * FROM users WHERE username='admin'", (err,row)=>{
     if(!row){
       db.run("INSERT INTO users (username,password) VALUES (?,?)",
         ["admin","1234"]);
-      console.log("✅ Default login: admin / 1234");
+      console.log("✅ Login: admin / 1234");
     }
   });
+
 });
 
 // ---------------- LOGIN ----------------
@@ -60,7 +61,6 @@ app.post("/login", (req,res)=>{
   db.get("SELECT * FROM users WHERE username=? AND password=?",
     [username,password],
     (err,user)=>{
-      if(err) return res.json({error:"DB error"});
       if(!user) return res.json({error:"Invalid login"});
       res.json({success:true});
     });
@@ -73,15 +73,17 @@ app.get("/products", (req,res)=>{
 
 app.post("/products", (req,res)=>{
   const p = req.body;
+
   db.run(`INSERT INTO products(item_id,name,model,category,price,cost,stock)
     VALUES(?,?,?,?,?,?,?)`,
     [p.item_id,p.name,p.model,p.category,p.price,p.cost,p.stock],
     ()=>res.json({success:true}));
 });
 
-// ---------------- STOCK ----------------
+// ---------------- ADD STOCK ----------------
 app.post("/add-stock", (req,res)=>{
   const {product_id,quantity} = req.body;
+
   db.run("UPDATE products SET stock=stock+? WHERE id=?",
     [quantity,product_id],
     ()=>res.json({success:true}));
@@ -90,6 +92,7 @@ app.post("/add-stock", (req,res)=>{
 // ---------------- AGENTS ----------------
 app.post("/agents", (req,res)=>{
   const {name,phone,id_number} = req.body;
+
   db.run("INSERT INTO agents(name,phone,id_number) VALUES(?,?,?)",
     [name,phone,id_number],
     ()=>res.json({success:true}));
@@ -104,8 +107,8 @@ app.post("/transfer", (req,res)=>{
   const {agent_id,product_id,quantity} = req.body;
 
   db.get("SELECT * FROM products WHERE id=?",[product_id],(err,p)=>{
-    if(!p) return res.json({error:"No product"});
-    if(p.stock < quantity) return res.json({error:"Low stock"});
+    if(!p) return res.json({error:"Product not found"});
+    if(p.stock < quantity) return res.json({error:"Not enough stock"});
 
     db.run("UPDATE products SET stock=stock-? WHERE id=?",
       [quantity,product_id]);
@@ -119,7 +122,7 @@ app.post("/transfer", (req,res)=>{
 
 app.get("/transfers", (req,res)=>{
   db.all(`
-    SELECT t.*, a.name agent_name, p.name product_name
+    SELECT t.*, a.name as agent_name, p.name as product_name
     FROM transfers t
     JOIN agents a ON t.agent_id=a.id
     JOIN products p ON t.product_id=p.id
